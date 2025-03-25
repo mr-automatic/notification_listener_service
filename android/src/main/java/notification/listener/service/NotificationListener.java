@@ -51,9 +51,9 @@ public class NotificationListener extends NotificationListenerService {
         }
 
         // ⛔ Пропуск собственных уведомлений
-        if (getPackageName().equals(notification.getPackageName())) {
-            return;
-        }
+        // if (getPackageName().equals(notification.getPackageName())) {
+        //     return;
+        // }
 
         String packageName = notification.getPackageName();
         Notification notif = notification.getNotification();
@@ -87,7 +87,6 @@ public class NotificationListener extends NotificationListenerService {
             intent.putExtra(NotificationConstants.GROUP_KEY, notification.getGroupKey());
             if (notification.getUser() != null) {
                 intent.putExtra(NotificationConstants.USER, notification.getUser().toString());
-                intent.putExtra(NotificationConstants.USER_ID, notification.getUser().getIdentifier());
             }
         }
 
