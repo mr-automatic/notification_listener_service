@@ -18,27 +18,23 @@ import androidx.work.Data;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkManager;
 
+import java.util.concurrent.TimeUnit;
+
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
-import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 import notification.listener.service.models.Action;
 import notification.listener.service.models.ActionCache;
-import android.annotation.SuppressLint;
-import android.os.Build;
 
-import java.util.concurrent.TimeUnit;
-
-
-public class NotificationListenerServicePlugin implements FlutterPlugin, ActivityAware, MethodCallHandler, PluginRegistry.ActivityResultListener, EventChannel.StreamHandler {
+public class NotificationListenerServicePlugin implements FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler, PluginRegistry.ActivityResultListener, EventChannel.StreamHandler {
 
     private static final String CHANNEL_TAG = "x-slayer/notifications_channel";
     private static final String EVENT_TAG = "x-slayer/notifications_event";
+    private static final String TAG = "NotificationPlugin";
 
     private MethodChannel channel;
     private EventChannel eventChannel;
@@ -46,56 +42,106 @@ public class NotificationListenerServicePlugin implements FlutterPlugin, Activit
     private Context context;
     private Activity mActivity;
 
-    private Result pendingResult;
-    final int REQUEST_CODE_FOR_NOTIFICATIONS = 1199;
+    private MethodChannel.Result pendingResult;
+    private static final int REQUEST_CODE_FOR_NOTIFICATIONS = 1199;
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         context = flutterPluginBinding.getApplicationContext();
+
         channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), CHANNEL_TAG);
         channel.setMethodCallHandler(this);
+
         eventChannel = new EventChannel(flutterPluginBinding.getBinaryMessenger(), EVENT_TAG);
         eventChannel.setStreamHandler(this);
     }
 
     @Override
-    public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
-        pendingResult = result;
-        if (call.method.equals("isPermissionGranted")) {
-            result.success(isPermissionGranted(context));
-        } else if (call.method.equals("requestPermission")) {
-            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
-            mActivity.startActivityForResult(intent, REQUEST_CODE_FOR_NOTIFICATIONS);
-        } else if (call.method.equals("sendReply")) {
-            final String message = call.argument("message");
-            final int notificationId = call.argument("notificationId");
-
-            final Action action = ActionCache.cachedNotifications.get(notificationId);
-            if (action == null) {
-                result.error("Notification", "Can't find this cached notification", null);
-            }
-            try {
-                action.sendReply(context, message);
-                result.success(true);
-            } catch (PendingIntent.CanceledException e) {
-                result.success(false);
-                e.printStackTrace();
-            }
-        } else if (call.method.equals("scheduleReply")) {
-            int notificationId = call.argument("notificationId");
-            String notificationKey = call.argument("notificationKey");
-            String message = call.argument("message");
-            int delaySeconds = call.argument("delay");
-
-            scheduleReply(context, notificationId,notificationKey, message, delaySeconds);
-            result.success(true);
+    public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+        if (channel != null) {
+            channel.setMethodCallHandler(null);
         }
-        else {
-            result.notImplemented();
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
         }
     }
 
+    @Override
+    public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
+        pendingResult = result;
+
+        switch (call.method) {
+            case "isPermissionGranted":
+                result.success(isPermissionGranted(context));
+                break;
+
+            case "requestPermission":
+                if (mActivity != null) {
+                    Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                    mActivity.startActivityForResult(intent, REQUEST_CODE_FOR_NOTIFICATIONS);
+                } else {
+                    result.error("Activity", "Activity is not attached", null);
+                }
+                break;
+
+            case "sendReply":
+                handleSendReply(call, result);
+                break;
+
+            case "scheduleReply":
+                handleScheduleReply(call, result);
+                break;
+
+            default:
+                result.notImplemented();
+        }
+    }
+
+    private void handleSendReply(MethodCall call, MethodChannel.Result result) {
+        String message = call.argument("message");
+        Integer notificationId = call.argument("notificationId");
+
+        if (message == null || notificationId == null) {
+            result.error("InvalidArguments", "message or notificationId is null", null);
+            return;
+        }
+
+        Action action = ActionCache.cachedNotifications.get(notificationId);
+        if (action == null) {
+            result.error("Notification", "Can't find this cached notification", null);
+            return;
+        }
+
+        try {
+            action.sendReply(context, message);
+            result.success(true);
+        } catch (PendingIntent.CanceledException e) {
+            Log.e(TAG, "Failed to send reply", e);
+            result.success(false);
+        }
+    }
+
+    private void handleScheduleReply(MethodCall call, MethodChannel.Result result) {
+        Integer notificationId = call.argument("notificationId");
+        String notificationKey = call.argument("notificationKey");
+        String message = call.argument("message");
+        Integer delaySeconds = call.argument("delay");
+
+        if (notificationId == null || notificationKey == null || message == null || delaySeconds == null) {
+            result.error("InvalidArguments", "One or more arguments are null", null);
+            return;
+        }
+
+        scheduleReply(context, notificationId, notificationKey, message, delaySeconds);
+        result.success(true);
+    }
+
     private void scheduleReply(Context context, int notificationId, String notificationKey, String message, int delaySeconds) {
+        if (context == null) {
+            Log.e(TAG, "Context is null in scheduleReply()");
+            return;
+        }
+
         WorkManager workManager = WorkManager.getInstance(context);
 
         Data inputData = new Data.Builder()
@@ -110,13 +156,7 @@ public class NotificationListenerServicePlugin implements FlutterPlugin, Activit
                 .build();
 
         workManager.enqueue(workRequest);
-        Log.i("NotificationListener", "Scheduled delayed reply: " + message + " in " + delaySeconds + " seconds");
-    }
-
-    @Override
-    public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-        channel.setMethodCallHandler(null);
-        eventChannel.setStreamHandler(null);
+        Log.i(TAG, "Scheduled delayed reply: " + message + " in " + delaySeconds + " seconds");
     }
 
     @Override
@@ -139,31 +179,49 @@ public class NotificationListenerServicePlugin implements FlutterPlugin, Activit
     public void onDetachedFromActivity() {
         this.mActivity = null;
     }
+
     @SuppressLint("WrongConstant")
     @Override
     public void onListen(Object arguments, EventChannel.EventSink events) {
-        IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(NotificationConstants.INTENT);
-        notificationReceiver = new NotificationReceiver(events);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            context.registerReceiver(notificationReceiver, intentFilter, Context.RECEIVER_EXPORTED);
-        }else{
-            context.registerReceiver(notificationReceiver, intentFilter);
+        if (context == null) {
+            Log.e(TAG, "Context is null in onListen");
+            return;
         }
-        Intent listenerIntent = new Intent(context, NotificationReceiver.class);
-        context.startService(listenerIntent);
-        Log.i("NotificationPlugin", "Started the notifications tracking service.");
+
+        try {
+            IntentFilter intentFilter = new IntentFilter(NotificationConstants.INTENT);
+            notificationReceiver = new NotificationReceiver(events);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                context.registerReceiver(notificationReceiver, intentFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                context.registerReceiver(notificationReceiver, intentFilter);
+            }
+
+            Intent listenerIntent = new Intent(context, NotificationReceiver.class);
+            context.startService(listenerIntent);
+
+            Log.i(TAG, "Started the notifications tracking service.");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to register notification receiver", e);
+        }
     }
 
     @Override
     public void onCancel(Object arguments) {
-        context.unregisterReceiver(notificationReceiver);
-        notificationReceiver = null;
+        try {
+            if (notificationReceiver != null) {
+                context.unregisterReceiver(notificationReceiver);
+                notificationReceiver = null;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error while unregistering notification receiver", e);
+        }
     }
 
     @Override
     public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_CODE_FOR_NOTIFICATIONS) {
+        if (requestCode == REQUEST_CODE_FOR_NOTIFICATIONS && pendingResult != null) {
             if (resultCode == Activity.RESULT_OK) {
                 pendingResult.success(true);
             } else if (resultCode == Activity.RESULT_CANCELED) {
@@ -171,6 +229,7 @@ public class NotificationListenerServicePlugin implements FlutterPlugin, Activit
             } else {
                 pendingResult.success(false);
             }
+            pendingResult = null;
             return true;
         }
         return false;

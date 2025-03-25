@@ -25,10 +25,11 @@ import java.io.ByteArrayOutputStream;
 
 import notification.listener.service.models.Action;
 
-
 @SuppressLint("OverrideAbstract")
 @RequiresApi(api = VERSION_CODES.JELLY_BEAN_MR2)
 public class NotificationListener extends NotificationListenerService {
+
+    private static final String TAG = "NotificationListener";
 
     @RequiresApi(api = VERSION_CODES.KITKAT)
     @Override
@@ -44,14 +45,26 @@ public class NotificationListener extends NotificationListenerService {
 
     @RequiresApi(api = VERSION_CODES.KITKAT)
     private void handleNotification(StatusBarNotification notification, boolean isRemoved) {
+        if (notification == null || notification.getNotification() == null) {
+            Log.w(TAG, "Notification or its content is null. Skipping...");
+            return;
+        }
+
+        // ⛔ Пропуск собственных уведомлений
+        if (getPackageName().equals(notification.getPackageName())) {
+            return;
+        }
+
         String packageName = notification.getPackageName();
-        Bundle extras = notification.getNotification().extras;
+        Notification notif = notification.getNotification();
+        Bundle extras = notif.extras;
+
         byte[] appIcon = getAppIcon(packageName);
         byte[] largeIcon = null;
-        Action action = NotificationUtils.getQuickReplyAction(notification.getNotification(), packageName);
 
+        Action action = NotificationUtils.getQuickReplyAction(notif, packageName);
         if (Build.VERSION.SDK_INT >= VERSION_CODES.M) {
-            largeIcon = getNotificationLargeIcon(getApplicationContext(), notification.getNotification());
+            largeIcon = getNotificationLargeIcon(getApplicationContext(), notif);
         }
 
         Intent intent = new Intent(NotificationConstants.INTENT);
@@ -59,17 +72,23 @@ public class NotificationListener extends NotificationListenerService {
         intent.putExtra(NotificationConstants.ID, notification.getId());
         intent.putExtra(NotificationConstants.CAN_REPLY, action != null);
 
-        // Capture Additional Fields
+        // Базовые поля уведомления
         intent.putExtra(NotificationConstants.NOTIFICATION_TAG, notification.getTag());
         intent.putExtra(NotificationConstants.POST_TIME, notification.getPostTime());
         intent.putExtra(NotificationConstants.IS_ONGOING, notification.isOngoing());
         intent.putExtra(NotificationConstants.IS_CLEARABLE, notification.isClearable());
-        intent.putExtra(NotificationConstants.USER_ID, notification.getNotification().extras.toString());
+
+        // Пользователь и ключи уведомлений
         if (Build.VERSION.SDK_INT >= VERSION_CODES.KITKAT_WATCH) {
             intent.putExtra(NotificationConstants.NOTIFICATION_KEY, notification.getKey());
         }
+
         if (Build.VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
             intent.putExtra(NotificationConstants.GROUP_KEY, notification.getGroupKey());
+            if (notification.getUser() != null) {
+                intent.putExtra(NotificationConstants.USER, notification.getUser().toString());
+                intent.putExtra(NotificationConstants.USER_ID, notification.getUser().getIdentifier());
+            }
         }
 
         if (Build.VERSION.SDK_INT >= VERSION_CODES.N) {
@@ -80,70 +99,83 @@ public class NotificationListener extends NotificationListenerService {
             intent.putExtra(NotificationConstants.IS_APP_GROUP, notification.isAppGroup());
         }
 
-        if (Build.VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
-            intent.putExtra(NotificationConstants.USER, notification.getUser().toString());
-        }
-
-
-
-        if (NotificationUtils.getQuickReplyAction(notification.getNotification(), packageName) != null) {
+        // Кешируем экшн, если он есть
+        if (action != null) {
             cachedNotifications.put(notification.getId(), action);
         }
 
+        // Иконки
         intent.putExtra(NotificationConstants.NOTIFICATIONS_ICON, appIcon);
         intent.putExtra(NotificationConstants.NOTIFICATIONS_LARGE_ICON, largeIcon);
 
+        // Текст уведомления
         if (extras != null) {
             CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE);
             CharSequence text = extras.getCharSequence(Notification.EXTRA_TEXT);
-
-            intent.putExtra(NotificationConstants.NOTIFICATION_TITLE, title == null ? null : title.toString());
-            intent.putExtra(NotificationConstants.NOTIFICATION_CONTENT, text == null ? null : text.toString());
+            intent.putExtra(NotificationConstants.NOTIFICATION_TITLE, title != null ? title.toString() : null);
+            intent.putExtra(NotificationConstants.NOTIFICATION_CONTENT, text != null ? text.toString() : null);
             intent.putExtra(NotificationConstants.IS_REMOVED, isRemoved);
-            intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, extras.containsKey(Notification.EXTRA_PICTURE));
 
+            // Картинка (EXTRA_PICTURE)
             if (extras.containsKey(Notification.EXTRA_PICTURE)) {
-                Bitmap bmp = (Bitmap) extras.get(Notification.EXTRA_PICTURE);
-                ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
-                intent.putExtra(NotificationConstants.EXTRAS_PICTURE, stream.toByteArray());
+                Object pictureObj = extras.get(Notification.EXTRA_PICTURE);
+                if (pictureObj instanceof Bitmap) {
+                    byte[] pictureBytes = bitmapToByteArray((Bitmap) pictureObj, Bitmap.CompressFormat.PNG, 100);
+                    intent.putExtra(NotificationConstants.EXTRAS_PICTURE, pictureBytes);
+                    intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, true);
+                } else {
+                    intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, false);
+                }
+            } else {
+                intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, false);
             }
         }
+
         sendBroadcast(intent);
     }
-
 
     public byte[] getAppIcon(String packageName) {
         try {
             PackageManager manager = getBaseContext().getPackageManager();
             Drawable icon = manager.getApplicationIcon(packageName);
-            ByteArrayOutputStream stream = new ByteArrayOutputStream();
-            getBitmapFromDrawable(icon).compress(Bitmap.CompressFormat.PNG, 100, stream);
-            return stream.toByteArray();
+            Bitmap bitmap = getBitmapFromDrawable(icon);
+            if (bitmap != null) {
+                return bitmapToByteArray(bitmap, Bitmap.CompressFormat.PNG, 100);
+            }
         } catch (PackageManager.NameNotFoundException e) {
-            e.printStackTrace();
-            return null;
+            Log.e(TAG, "App icon not found for package: " + packageName, e);
+        } catch (Exception e) {
+            Log.e(TAG, "Error while getting app icon", e);
         }
+        return null;
     }
 
     @RequiresApi(api = VERSION_CODES.M)
     private byte[] getNotificationLargeIcon(Context context, Notification notification) {
         try {
             Icon largeIcon = notification.getLargeIcon();
-            if (largeIcon == null) {
-                return null;
-            }
-            Drawable iconDrawable = largeIcon.loadDrawable(context);
-            Bitmap iconBitmap = ((BitmapDrawable) iconDrawable).getBitmap();
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            iconBitmap.compress(Bitmap.CompressFormat.PNG, 80, outputStream);
+            if (largeIcon == null) return null;
 
-            return outputStream.toByteArray();
+            Drawable iconDrawable = largeIcon.loadDrawable(context);
+            if (iconDrawable instanceof BitmapDrawable) {
+                Bitmap iconBitmap = ((BitmapDrawable) iconDrawable).getBitmap();
+                return bitmapToByteArray(iconBitmap, Bitmap.CompressFormat.PNG, 80);
+            }
         } catch (Exception e) {
-            e.printStackTrace();
-            Log.d("ERROR LARGE ICON", "getNotificationLargeIcon: " + e.getMessage());
+            Log.e(TAG, "getNotificationLargeIcon failed", e);
+        }
+        return null;
+    }
+
+    private byte[] bitmapToByteArray(Bitmap bitmap, Bitmap.CompressFormat format, int quality) {
+        if (bitmap == null) return null;
+        try {
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            bitmap.compress(format, quality, stream);
+            return stream.toByteArray();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to convert bitmap to byte array", e);
             return null;
         }
     }
-
 }

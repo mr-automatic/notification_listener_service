@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build.VERSION_CODES;
+import android.util.Log;
 
 import androidx.annotation.RequiresApi;
 
@@ -15,7 +16,9 @@ import java.util.HashMap;
 
 public class NotificationReceiver extends BroadcastReceiver {
 
-    private EventSink eventSink;
+    private static final String TAG = "NotificationReceiver";
+
+    private volatile EventSink eventSink;
 
     public NotificationReceiver(EventSink eventSink) {
         this.eventSink = eventSink;
@@ -24,40 +27,48 @@ public class NotificationReceiver extends BroadcastReceiver {
     @RequiresApi(api = VERSION_CODES.JELLY_BEAN_MR2)
     @Override
     public void onReceive(Context context, Intent intent) {
-        String packageName = intent.getStringExtra(PACKAGE_NAME);
-        String title = intent.getStringExtra(NOTIFICATION_TITLE);
-        String content = intent.getStringExtra(NOTIFICATION_CONTENT);
-        byte[] notificationIcon = intent.getByteArrayExtra(NOTIFICATIONS_ICON);
-        byte[] notificationExtrasPicture = intent.getByteArrayExtra(EXTRAS_PICTURE);
-        byte[] largeIcon = intent.getByteArrayExtra(NOTIFICATIONS_LARGE_ICON);
-        boolean haveExtraPicture = intent.getBooleanExtra(HAVE_EXTRA_PICTURE, false);
-        boolean hasRemoved = intent.getBooleanExtra(IS_REMOVED, false);
-        boolean canReply = intent.getBooleanExtra(CAN_REPLY, false);
-        int id = intent.getIntExtra(ID, -1);
+        if (intent == null || eventSink == null) {
+            Log.w(TAG, "Intent or eventSink is null. Skipping.");
+            return;
+        }
 
+        HashMap<String, Object> data = extractNotificationData(intent);
 
+        try {
+            eventSink.success(data);
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending event to Flutter via eventSink", e);
+        }
+    }
+
+    private HashMap<String, Object> extractNotificationData(Intent intent) {
         HashMap<String, Object> data = new HashMap<>();
-        data.put("id", id);
-        data.put("packageName", packageName);
-        data.put("title", title);
-        data.put("content", content);
-        data.put("notificationIcon", notificationIcon);
-        data.put("notificationExtrasPicture", notificationExtrasPicture);
-        data.put("haveExtraPicture", haveExtraPicture);
-        data.put("largeIcon", largeIcon);
-        data.put("hasRemoved", hasRemoved);
-        data.put("canReply", canReply);
-        data.put("notificationTag", intent.getStringExtra(NotificationConstants.NOTIFICATION_TAG));
-        data.put("postTime", intent.getLongExtra(NotificationConstants.POST_TIME, 0));
-        data.put("isOngoing", intent.getBooleanExtra(NotificationConstants.IS_ONGOING, false));
-        data.put("isClearable", intent.getBooleanExtra(NotificationConstants.IS_CLEARABLE, false));
-        data.put("userId", intent.getStringExtra(NotificationConstants.USER_ID));
-        data.put("notificationKey", intent.getStringExtra(NotificationConstants.NOTIFICATION_KEY));
-        data.put("groupKey", intent.getStringExtra(NotificationConstants.GROUP_KEY));
-        data.put("isGroup", intent.getBooleanExtra(NotificationConstants.IS_GROUP,false));
-        data.put("isAppGroup", intent.getBooleanExtra(NotificationConstants.IS_APP_GROUP,false));
-        data.put("user", intent.getStringExtra(NotificationConstants.USER));
 
-        eventSink.success(data);
+        data.put("id", intent.getIntExtra(ID, -1));
+        data.put("packageName", safeString(intent.getStringExtra(PACKAGE_NAME)));
+        data.put("title", safeString(intent.getStringExtra(NOTIFICATION_TITLE)));
+        data.put("content", safeString(intent.getStringExtra(NOTIFICATION_CONTENT)));
+        data.put("notificationIcon", intent.getByteArrayExtra(NOTIFICATIONS_ICON));
+        data.put("notificationExtrasPicture", intent.getByteArrayExtra(EXTRAS_PICTURE));
+        data.put("largeIcon", intent.getByteArrayExtra(NOTIFICATIONS_LARGE_ICON));
+        data.put("haveExtraPicture", intent.getBooleanExtra(HAVE_EXTRA_PICTURE, false));
+        data.put("hasRemoved", intent.getBooleanExtra(IS_REMOVED, false));
+        data.put("canReply", intent.getBooleanExtra(CAN_REPLY, false));
+        data.put("notificationTag", safeString(intent.getStringExtra(NOTIFICATION_TAG)));
+        data.put("postTime", intent.getLongExtra(POST_TIME, 0));
+        data.put("isOngoing", intent.getBooleanExtra(IS_ONGOING, false));
+        data.put("isClearable", intent.getBooleanExtra(IS_CLEARABLE, false));
+        data.put("userId", safeString(intent.getStringExtra(USER_ID)));
+        data.put("notificationKey", safeString(intent.getStringExtra(NOTIFICATION_KEY)));
+        data.put("groupKey", safeString(intent.getStringExtra(GROUP_KEY)));
+        data.put("isGroup", intent.getBooleanExtra(IS_GROUP, false));
+        data.put("isAppGroup", intent.getBooleanExtra(IS_APP_GROUP, false));
+        data.put("user", safeString(intent.getStringExtra(USER)));
+
+        return data;
+    }
+
+    private String safeString(String value) {
+        return value != null ? value : "";
     }
 }

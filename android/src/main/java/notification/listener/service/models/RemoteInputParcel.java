@@ -17,7 +17,6 @@ public class RemoteInputParcel implements Parcelable {
     private boolean allowFreeFormInput;
     private Bundle extras;
 
-
     public RemoteInputParcel(RemoteInput input) {
         label = input.getLabel().toString();
         resultKey = input.getResultKey();
@@ -38,8 +37,9 @@ public class RemoteInputParcel implements Parcelable {
         if (charSequence != null) {
             int size = charSequence.length;
             choices = new String[charSequence.length];
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i < size; i++) {
                 choices[i] = charSequence[i].toString();
+            }
         }
     }
 
@@ -77,11 +77,13 @@ public class RemoteInputParcel implements Parcelable {
         return 0;
     }
 
-    public static final Parcelable.Creator CREATOR = new Parcelable.Creator() {
+    public static final Parcelable.Creator<RemoteInputParcel> CREATOR = new Parcelable.Creator<RemoteInputParcel>() {
+        @Override
         public RemoteInputParcel createFromParcel(Parcel in) {
             return new RemoteInputParcel(in);
         }
 
+        @Override
         public RemoteInputParcel[] newArray(int size) {
             return new RemoteInputParcel[size];
         }

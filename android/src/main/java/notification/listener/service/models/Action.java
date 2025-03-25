@@ -52,8 +52,9 @@ public class Action implements Parcelable {
         this.p = action.actionIntent;
         if (action.getRemoteInputs() != null) {
             int size = action.getRemoteInputs().length;
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i < size; i++) {
                 remoteInputs.add(new RemoteInputParcel(action.getRemoteInputs()[i]));
+            }
         }
         this.isQuickReply = isQuickReply;
     }
@@ -104,11 +105,13 @@ public class Action implements Parcelable {
         return 0;
     }
 
-    public static final Parcelable.Creator CREATOR = new Parcelable.Creator() {
+    public static final Parcelable.Creator<Action> CREATOR = new Parcelable.Creator<Action>() {
+        @Override
         public Action createFromParcel(Parcel in) {
             return new Action(in);
         }
 
+        @Override
         public Action[] newArray(int size) {
             return new Action[size];
         }
